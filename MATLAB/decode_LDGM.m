@@ -1,0 +1,139 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Written By: ZAFAR IQBAL                                                 %
+%             Gwangju Institute of Science and Technology, South Korea    %
+% Date: Jan 18, 2013.                                                     %
+% Modification History:                                                   %
+% Jan 18, 2013... Current version created.                                %
+%                                                                         %
+%                                                                         %
+%                                                                         %
+%                                                                         %
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+function [output] = decode_LDGM(rx_p1, rx_p2, N, j, k, Q1, Q2, Ec1, Ec2, N0coded, N0uncoded, H1, H2, pe)
+
+% output = the decoded binary signal after LDGM decoding process
+% Rx_signal = received BPSK signal at the decoder
+% N = the length of codeword of the LDGM code
+% j = the number of 1s in a column of the LDGM generator matrix
+% k = the number of 1s in a row of the LDGM generator matrix
+% Q1 = Q1 (row in a column) matrix for LDGM generator matrix
+% Q2 = Q2 (column in a row) matrix for LDGM generator matrix
+% EsN0 = the received symbol energy (Es/N0)
+%==========================================================================
+
+%number of parity bits
+parity_bits=length(Q2(:,1));
+
+%==========================================================================
+                %Computing the Log-Likelihood Ratios
+
+%LLRf = [];
+
+%    for index = 1:length(Rx_signal)
+        %LLRf = 4*(Ec1/N0uncoded)*Rx_signal; % Log-Likelihood Ratios
+        LLRf = [4*(Ec1/N0uncoded)*rx_p1.* (abs(H1).^2) (1-pe)*4*(Ec2/N0coded)*rx_p2.*(abs(H2).^2)+(pe)*4*(Ec2/N0coded)*rx_p2.*(abs(H2).^2)];
+%    end
+%LLRf
+
+LLRr = zeros(parity_bits,N); % Initializing the LLR of check bits
+%==========================================================================
+                %Bit-to-Check and Check-to-Bit messages computation
+
+%Bit-to-Check messages computation
+LLRq = [];
+for iter=1:20 %Performing 10 iterations of Bit-to-Check and Check-to-Bit message calculations
+for t= 1:N
+    for m = 1:j(t)
+        LLRr_sum =0;
+        for m_prime = 1:j(t)
+            LLRr_sum = LLRr_sum + LLRr(Q1(m_prime,t),t); %Computing the sum of prob at bit-nodes
+        end
+        LLRr_sum = LLRr_sum - LLRr(Q1(m,t),t); %Removing the value of check node for which the message is intended 
+        LLRq(Q1(m,t),t) = LLRf(t) + LLRr_sum; % Sum of probability for the check nodes
+        if LLRq(Q1(m,t),t) > 64 %limiting the value of variable to 64
+               LLRq(Q1(m,t),t) = 64;
+        elseif LLRq(Q1(m,t),t) < -64
+            LLRq(Q1(m,t),t) = -64;
+        end
+    end
+end
+%LLRq
+
+%Check-to-Bit messages computation
+for l = 1: parity_bits
+    for m = 1: k(l)
+        LLRq_sum =0;
+        LLRq_prod =1;
+        for m_prime = 1:k(l)
+
+            F_x = -log(tanh(abs(LLRq(l,Q2(l,m_prime))/2))); %Computing the prob at check-nodes using F(x)= -log(tanh(x/2)) 
+%             if F_x >64 %Limiting the value of function to 64
+%                 F_x = 64;
+%             end
+            LLRq_sum = LLRq_sum + F_x; %Summing all the probablities at check nodes
+            
+            if LLRq(l,Q2(l,m_prime)) >= 0 %Deciding the prob signs at check nodes 
+                signLLRq = +1;
+            elseif LLRq(l,Q2(l,m_prime)) < 0
+                    signLLRq = -1;
+            end
+            LLRq_prod = LLRq_prod * signLLRq; %Computing the product of prob signs at check-nodes
+        end
+        
+        if LLRq_sum > 64
+            LLRq_sum = 64;
+        elseif LLRq_sum < -64
+            LLRq_sum = -64;
+        end        
+        remove_bitnode = -log(tanh(abs(LLRq(l,Q2(l,m))/2)));
+        LLRq_sum = -log(tanh((LLRq_sum - remove_bitnode)/2)); %Removing the value of the bit node for which the message is intended and taking F(x)= -log(tanh(x/2))
+        
+        if LLRq_sum > 64
+            LLRq_sum = 64;
+        elseif LLRq_sum < -64
+            LLRq_sum = -64;
+        end
+        
+        if LLRq(l,Q2(l,m)) >= 0 %Deciding the prob signs at check nodes 
+                signLLRq = +1;
+            elseif LLRq(l,Q2(l,m)) < 0
+                    signLLRq = -1;
+            end
+
+        LLRq_prod = LLRq_prod / signLLRq;
+        
+        LLRr(l,Q2(l,m)) = LLRq_prod * LLRq_sum * (-1)^k(l); % Sum of probability for the bit nodes
+    end
+end
+%LLRr = (1-pe)*LLRr + pe*(-LLRr);
+%LLRr = (1-pe)*LLRr;
+%LLRr
+end
+
+%==========================================================================
+%Deciding the output values
+LLRp = zeros(1,N);
+output = zeros(1,N);
+
+for t = 1:N  % Calculating the output of decoder
+    LLRr_sum1 = 0;
+    for m = 1:j(t)
+        %for m_prime = 1:j
+            LLRr_sum1 = LLRr_sum1 + LLRr(Q1(m,t),t);
+        %end
+    end
+    LLRp(t) = LLRf(t) + LLRr_sum1;
+end
+%LLRp
+for t = 1:N  %Making Decision
+    if LLRp(t) >0
+        output(t) = 1;
+    else output(t) = 0;
+    end
+end
+%output = output(N-length(message)+1:N);
+%output = output(1:length(message));
+%msg_coded
+%output
+end
